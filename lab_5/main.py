@@ -1,54 +1,67 @@
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
+import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from cryptography.fernet import Fernet
+from myapp import Base, User, encrypt_password, decrypt_password
 
-# Генерация ключа для шифрования
+# Инициализация ключа шифрования и движка базы данных
 key = Fernet.generate_key()
 cipher_suite = Fernet(key)
 
-Base = declarative_base()
+@pytest.fixture(scope='function')
+def db_session():
+    """Фикстура для создания и сброса базы данных для каждого теста."""
+    engine = create_engine('sqlite:///:memory:')
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    yield session
+    session.close()
 
-class User(Base):
-    """Модель для таблицы пользователей с зашифрованными паролями."""
-    __tablename__ = 'users'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(String, nullable=False)
-    email = Column(String, nullable=False)
-    password = Column(String, nullable=False)  # Храним зашифрованный пароль
+def test_create_user(db_session):
+    """Тест создания пользователя."""
+    encrypted_password = encrypt_password('mypassword')
+    user = User(username='TestUser', email='test@example.com', password=encrypted_password)
+    db_session.add(user)
+    db_session.commit()
 
-# Подключение к базе данных SQLite
-engine = create_engine('sqlite:///secure_users.db')
-Base.metadata.create_all(engine)
+    saved_user = db_session.query(User).filter_by(username='TestUser').first()
+    assert saved_user is not None
+    assert decrypt_password(saved_user.password.encode()) == 'mypassword'
 
-Session = sessionmaker(bind=engine)
-session = Session()
+def test_read_user(db_session):
+    """Тест чтения данных пользователя."""
+    encrypted_password = encrypt_password('testpassword')
+    user = User(username='ReadUser', email='read@example.com', password=encrypted_password)
+    db_session.add(user)
+    db_session.commit()
 
-def encrypt_password(password):
-    """Шифрует пароль."""
-    encrypted_password = cipher_suite.encrypt(password.encode())
-    return encrypted_password
+    retrieved_user = db_session.query(User).filter_by(username='ReadUser').first()
+    assert retrieved_user is not None
+    assert decrypt_password(retrieved_user.password.encode()) == 'testpassword'
 
-def decrypt_password(encrypted_password):
-    """Расшифровывает пароль."""
-    decrypted_password = cipher_suite.decrypt(encrypted_password).decode()
-    return decrypted_password
+def test_update_user(db_session):
+    """Тест обновления пользователя."""
+    user = User(username='UpdateUser', email='update@example.com', password=encrypt_password('oldpassword'))
+    db_session.add(user)
+    db_session.commit()
 
-def create_user(username, email, password):
-    """Создает нового пользователя с зашифрованным паролем."""
-    encrypted_password = encrypt_password(password)
-    new_user = User(username=username, email=email, password=encrypted_password)
-    session.add(new_user)
-    session.commit()
-    print(f'Пользователь {username} добавлен в базу данных.')
+    user.email = 'new_email@example.com'
+    user.password = encrypt_password('newpassword')
+    db_session.commit()
 
-def get_all_users():
-    """Получает всех пользователей из базы данных."""
-    users = session.query(User).all()
-    for user in users:
-        decrypted_password = decrypt_password(user.password.encode())
-        print(f'ID: {user.id}, Имя: {user.username}, Email: {user.email}, Пароль: {decrypted_password}')
+    updated_user = db_session.query(User).filter_by(username='UpdateUser').first()
+    assert updated_user.email == 'new_email@example.com'
+    assert decrypt_password(updated_user.password.encode()) == 'newpassword'
 
-# Пример работы с пользователями
-create_user('Alice', 'alice@example.com', 'mysecretpassword')
-get_all_users()
+def test_delete_user(db_session):
+    """Тест удаления пользователя."""
+    user = User(username='DeleteUser', email='delete@example.com', password=encrypt_password('deletepassword'))
+    db_session.add(user)
+    db_session.commit()
+
+    db_session.delete(user)
+    db_session.commit()
+
+    deleted_user = db_session.query(User).filter_by(username='DeleteUser').first()
+    assert deleted_user is None

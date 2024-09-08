@@ -1,54 +1,102 @@
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from cryptography.fernet import Fernet
+import sqlite3
 
-# Генерация ключа для шифрования
-key = Fernet.generate_key()
-cipher_suite = Fernet(key)
+def connect_db():
+    """
+    Создает подключение к базе данных SQLite.
+    Возвращает объект подключения.
+    """
+    return sqlite3.connect('example.db')
 
-Base = declarative_base()
+def create_table(conn):
+    """
+    Создает таблицу 'notes', если она не существует.
+    Использует переданное подключение.
+    """
+    with conn:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS notes (
+                id INTEGER PRIMARY KEY,
+                title TEXT NOT NULL,
+                content TEXT
+            )
+        ''')
 
-class User(Base):
-    """Модель для таблицы пользователей с зашифрованными паролями."""
-    __tablename__ = 'users'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(String, nullable=False)
-    email = Column(String, nullable=False)
-    password = Column(String, nullable=False)  # Храним зашифрованный пароль
+def insert_record(conn, title, content):
+    """
+    Вставляет новую запись в таблицу 'notes'.
+    Использует переданное подключение и параметры title и content.
+    """
+    with conn:
+        conn.execute('''
+            INSERT INTO notes (title, content) VALUES (?, ?)
+        ''', (title, content))
 
-# Подключение к базе данных SQLite
-engine = create_engine('sqlite:///secure_users.db')
-Base.metadata.create_all(engine)
+def update_record(conn, note_id, title, content):
+    """
+    Обновляет запись в таблице 'notes' по заданному ID.
+    Использует переданное подключение и параметры note_id, title и content.
+    """
+    with conn:
+        conn.execute('''
+            UPDATE notes SET title = ?, content = ? WHERE id = ?
+        ''', (title, content, note_id))
 
-Session = sessionmaker(bind=engine)
-session = Session()
+def delete_record(conn, note_id):
+    """
+    Удаляет запись из таблицы 'notes' по заданному ID.
+    Использует переданное подключение и параметр note_id.
+    """
+    with conn:
+        conn.execute('''
+            DELETE FROM notes WHERE id = ?
+        ''', (note_id,))
 
-def encrypt_password(password):
-    """Шифрует пароль."""
-    encrypted_password = cipher_suite.encrypt(password.encode())
-    return encrypted_password
+def fetch_records(conn):
+    """
+    Извлекает все записи из таблицы 'notes'.
+    Возвращает список кортежей с результатами.
+    """
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, title, content FROM notes')
+    return cursor.fetchall()
 
-def decrypt_password(encrypted_password):
-    """Расшифровывает пароль."""
-    decrypted_password = cipher_suite.decrypt(encrypted_password).decode()
-    return decrypted_password
+def main():
+    """
+    Основная функция для работы с приложением.
+    Обеспечивает взаимодействие с пользователем через текстовый интерфейс.
+    """
+    conn = connect_db()
+    create_table(conn)
+    
+    while True:
+        print('1. Добавить заметку')
+        print('2. Обновить заметку')
+        print('3. Удалить заметку')
+        print('4. Просмотреть заметки')
+        print('5. Выход')
+        choice = input('Введите ваш выбор: ')
+        
+        if choice == '1':
+            title = input('Введите заголовок: ')
+            content = input('Введите содержание: ')
+            insert_record(conn, title, content)
+        elif choice == '2':
+            note_id = int(input('Введите ID заметки для обновления: '))
+            title = input('Введите новый заголовок: ')
+            content = input('Введите новое содержание: ')
+            update_record(conn, note_id, title, content)
+        elif choice == '3':
+            note_id = int(input('Введите ID заметки для удаления: '))
+            delete_record(conn, note_id)
+        elif choice == '4':
+            records = fetch_records(conn)
+            for record in records:
+                print(record)
+        elif choice == '5':
+            conn.close()
+            break
+        else:
+            print('Некорректный выбор. Пожалуйста, попробуйте снова.')
 
-def create_user(username, email, password):
-    """Создает нового пользователя с зашифрованным паролем."""
-    encrypted_password = encrypt_password(password)
-    new_user = User(username=username, email=email, password=encrypted_password)
-    session.add(new_user)
-    session.commit()
-    print(f'Пользователь {username} добавлен в базу данных.')
-
-def get_all_users():
-    """Получает всех пользователей из базы данных."""
-    users = session.query(User).all()
-    for user in users:
-        decrypted_password = decrypt_password(user.password.encode())
-        print(f'ID: {user.id}, Имя: {user.username}, Email: {user.email}, Пароль: {decrypted_password}')
-
-# Пример работы с пользователями
-create_user('Alice', 'alice@example.com', 'mysecretpassword')
-get_all_users()
+if __name__ == '__main__':
+    main()
